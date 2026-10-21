@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         研优课手机版 B 站式手势
 // @namespace    https://github.com/ZhuYiXuanNB/bettermfclass
-// @version      1.1.0
+// @version      1.1.1
 // @description  给研优课手机版（/wap）的播放器加 B 站移动端风格手势：长按倍速、双击左右快退快进、左右拖动调进度、右半屏上下滑调音量，外加一个倍速角标。倍速严格限定在播放器白名单内（最高 2x），不会触发平台的外部倍速检测。
 // @author       ZhuYiXuanNB
 // @match        https://ky.mfedu.cn/*
@@ -52,7 +52,7 @@
   if (window.__mfcMobileHooked) return;
   window.__mfcMobileHooked = true;
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const ACCENT = '#FB7299';
 
   // ==========================================================================
@@ -65,7 +65,9 @@
     seekStep: 10,          // 双击快退/快进秒数
     doubleTapMs: 300,      // 双击判定窗口
     dragFullWidthSeek: 0,  // 0 = 自动（长视频 300s / 短视频 30% 时长）
-    showOsd: true
+    showOsd: true,
+    // 倍速相关的浮层：默认关掉，交给播放器自己的提示，避免遮挡画面
+    osdOnRate: false
   };
 
   const STORE_KEY = 'mfc-mobile-config';
@@ -527,6 +529,7 @@
   // 五、播放控制（全部走适配器 / 白名单）
   // ==========================================================================
   function showRateToast(rate, note) {
+    if (!cfg.osdOnRate) return; // 默认不弹，交给播放器自己的提示
     showToast('rate', `${ICON.speed}<span class="mfc-big">${rate.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x</span><span class="mfc-sub">${note || '倍速'}</span>`, {
       duration: 1000
     });
@@ -582,10 +585,12 @@
     boost.p = p;
     boost.rate = target;
     boost.baseRate = 1;
-    showToast('boost', `${ICON.right}<span class="mfc-big">${target.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x</span><span class="mfc-sub">倍速播放中 · 松手恢复</span>`, {
-      sticky: true,
-      cls: 'mfc-boost'
-    });
+    if (cfg.osdOnRate) {
+      showToast('boost', `${ICON.right}<span class="mfc-big">${target.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x</span><span class="mfc-sub">倍速播放中 · 松手恢复</span>`, {
+        sticky: true,
+        cls: 'mfc-boost'
+      });
+    }
     placeChip();
     clearInterval(boost.timer);
     boost.timer = setInterval(() => {
