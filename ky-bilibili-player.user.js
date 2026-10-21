@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         研优课(ky.mfedu.cn) B站式播放控制
 // @namespace    https://github.com/ZhuYiXuanNB/bettermfclass
-// @version      1.1.1
+// @version      1.1.2
 // @description  给研优课的课程播放器加上 B 站风格的快捷键：← / → 快退快进、按住 → 倍速播放、↑ / ↓ 音量、空格播放暂停、F 全屏、W 网页全屏。已适配百家云(BPlayer/ffplayer 画布播放)与保利威。
 // @author       ZhuYiXuanNB
 // @match        https://ky.mfedu.cn/*
@@ -42,7 +42,7 @@
   if (window.__mfcPlayerHooked) return;
   window.__mfcPlayerHooked = true;
 
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   const ACCENT = '#FB7299'; // B 站粉
 
   // ==========================================================================
@@ -692,6 +692,34 @@
     });
   }
 
+  // ---- 连按合并 -------------------------------------------------------------
+  // 百家云的 ffplayer 每 seek 一次都要重开解码。一秒里连开十几次 seek 之后，
+  // 它会长时间停在 seeking 状态（画面不动、按钮一直转圈），也就是“按卡住了”。
+  // 这里把连按攒起来，最多每 MIN_SEEK_GAP 毫秒真正 seek 一次，总位移不变。
+  const seekBurst = { pending: 0, lastAt: 0, timer: 0 };
+  const MIN_SEEK_GAP = 400; // 实测 300~400ms 一次解码器跟得上，再密就开始掉速
+
+  function queueSeek(p, delta) {
+    if (!p || !delta) return;
+    seekBurst.pending += delta;
+    if (seekBurst.timer) return; // 已经在排队等下一次
+    const wait = Math.max(0, MIN_SEEK_GAP - (Date.now() - seekBurst.lastAt));
+    if (wait === 0) flushSeek();
+    else seekBurst.timer = setTimeout(flushSeek, wait);
+  }
+
+  function flushSeek() {
+    clearTimeout(seekBurst.timer);
+    seekBurst.timer = 0;
+    const delta = seekBurst.pending;
+    seekBurst.pending = 0;
+    if (!delta) return;
+    const p = lastPlayerRef && lastPlayerRef.el && lastPlayerRef.el.isConnected ? lastPlayerRef : getPlayer();
+    if (!p) return;
+    seekBurst.lastAt = Date.now();
+    seekBy(p, delta);
+  }
+
   function togglePlay(p) {
     if (!p) return;
     cancelKeepPaused();
@@ -744,7 +772,7 @@
 
   function nudge(p, dir) {
     if (!p) return;
-    seekBy(p, dir);
+    queueSeek(p, dir);
   }
 
   // ---- 倍速快放（按住 →）-----------------------------------------------------
@@ -921,7 +949,7 @@
       const now = Date.now();
       if (now - lastAt < 190) return;
       lastAt = now;
-      seekBy(cur, delta);
+      queueSeek(cur, delta); // 同样走合并，长按快退不会把解码器打爆
     }, 60);
   }
 
@@ -1091,7 +1119,7 @@
     clearHold();
     if (!wasTap || !p) return;
 
-    seekBy(p, code === 'ArrowRight' ? cfg.seekStep : -cfg.seekStep); // 里面带提示浮层
+    queueSeek(p, code === 'ArrowRight' ? cfg.seekStep : -cfg.seekStep); // 里面带提示浮层
   }
 
   // ==========================================================================
@@ -1239,6 +1267,53 @@
       }
     }
   }, 1500);
+
+  // ---- 卡死兜底 -------------------------------------------------------------
+  // 万一还是被密集 seek 拖进了“一直 seeking、画面不动”的状态，这里两段式把它唤醒：
+  //   3 秒没进展 -> 先清掉转圈状态；
+  //   再过 4 秒还是不动 -> 原地重开一次解码。
+  // 正常播放 / 正常 seek 时这个定时器什么都不做。
+  const stuck = { since: 0, lastTime: -1, kicked: 0, cleared: false };
+
+  function resetStuck() {
+    stuck.since = 0;
+    stuck.lastTime = -1;
+    stuck.kicked = 0;
+    stuck.cleared = false;
+  }
+
+  function watchStuck() {
+    const p = lastPlayerRef;
+    if (!p || p.kind !== 'bplayer' || !p.raw) return resetStuck();
+    const inst = p.raw;
+    if (p.paused() || !inst.isSeeking) return resetStuck();
+
+    const now = Date.now();
+    const t = p.time();
+    if (stuck.lastTime >= 0 && Math.abs(t - stuck.lastTime) > 0.5) return resetStuck(); // 有进展
+    if (!stuck.since) {
+      stuck.since = now;
+      stuck.lastTime = t;
+      return;
+    }
+    const stalled = now - stuck.since;
+
+    if (!stuck.cleared && stalled > 3000) {
+      stuck.cleared = true;
+      try {
+        inst.toggleSeekingStat(false); // 只把转圈状态和按钮图标恢复
+      } catch (e) {}
+      return;
+    }
+    if (stuck.cleared && stuck.kicked < 1 && stalled > 7000) {
+      stuck.kicked++;
+      try {
+        inst.seek(inst.currentTime || 0); // 原地重开解码
+      } catch (e) {}
+    }
+  }
+
+  setInterval(watchStuck, 600);
 
   // ---- 首次使用提示 ---------------------------------------------------------
   function firstRun() {
