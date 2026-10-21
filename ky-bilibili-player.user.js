@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         研优课(ky.mfedu.cn) B站式播放控制
 // @namespace    https://github.com/ZhuYiXuanNB/bettermfclass
-// @version      1.1.0
+// @version      1.1.1
 // @description  给研优课的课程播放器加上 B 站风格的快捷键：← / → 快退快进、按住 → 倍速播放、↑ / ↓ 音量、空格播放暂停、F 全屏、W 网页全屏。已适配百家云(BPlayer/ffplayer 画布播放)与保利威。
 // @author       ZhuYiXuanNB
 // @match        https://ky.mfedu.cn/*
@@ -42,7 +42,7 @@
   if (window.__mfcPlayerHooked) return;
   window.__mfcPlayerHooked = true;
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const ACCENT = '#FB7299'; // B 站粉
 
   // ==========================================================================
@@ -748,13 +748,14 @@
   }
 
   // ---- 倍速快放（按住 →）-----------------------------------------------------
-  const boost = { active: false, p: null, rate: 1, baseRate: 1, timer: 0 };
+  const boost = { active: false, p: null, rate: 1, baseRate: 1, timer: 0, key: null };
 
-  function startBoost(p) {
+  function startBoost(p, key) {
     if (!p || boost.active) return;
     if (p.paused() || p.ended()) return;
     boost.active = true;
     boost.p = p;
+    boost.key = key || null;
     boost.rate = clamp(cfg.boostRate, 1.25, cfg.maxRate);
     boost.baseRate = p.rate() || 1;
     p.setRate(boost.rate);
@@ -781,6 +782,7 @@
     clearInterval(boost.timer);
     boost.timer = 0;
     boost.p = null;
+    boost.key = null;
     hideToast('boost');
     if (p) p.setRate(boost.baseRate || 1, { silent: true });
   }
@@ -841,7 +843,7 @@
   // ==========================================================================
   // 六、键盘
   // ==========================================================================
-  const hold = { key: null, timer: 0, repeat: 0 };
+  const hold = { key: null, timer: 0, repeat: 0, mode: null };
 
   // 这些键属于“快进 / 变速”，课程禁止时会被关掉
   const RESTRICTED_KEYS = { ArrowLeft: 1, ArrowRight: 1, Comma: 1, Period: 1 };
@@ -879,7 +881,35 @@
     hold.key = null;
     hold.timer = 0;
     hold.repeat = 0;
+    hold.mode = null;
     stopBoost();
+  }
+
+  /**
+   * 方向键的“短按 / 长按”判定：
+   *   按下时先不跳转，只起一个定时器；
+   *   到点还没松手 => 长按（→ 倍速、← 连续快退），全程不额外跳转；
+   *   提前松手     => 短按，在松手那一刻跳 step 秒。
+   * 这样“按住 → 只加速”才不会被开头那一下 +5 秒污染。
+   */
+  function beginHold(code) {
+    const p = getPlayer();
+    if (!p) return;
+    // 另一个方向键正在倍速 -> 先把它停掉，避免两个键抢状态把倍速卡住
+    if (boost.active) stopBoost();
+    hold.key = code;
+    hold.mode = null;
+    clearTimeout(hold.timer);
+    clearInterval(hold.repeat);
+    hold.timer = setTimeout(() => {
+      if (hold.key !== code) return;
+      const cur = getPlayer();
+      if (!cur) return;
+      hold.mode = 'hold';
+      const forward = code === 'ArrowRight';
+      if (forward && !cur.paused() && !cur.ended()) startBoost(cur, code); // 播放中按住 →：只加速
+      else startRepeatSeek(cur, forward ? cfg.seekStep : -cfg.seekStep); // ← 或暂停中：连续快进/快退
+    }, cfg.holdDelay);
   }
 
   function startRepeatSeek(p, delta) {
@@ -973,30 +1003,13 @@
       case 'ArrowRight': {
         eat();
         if (repeat) return;
-        // 单击 = 快进一小段
-        seekBy(p, cfg.seekStep);
-        hold.key = 'ArrowRight';
-        clearTimeout(hold.timer);
-        hold.timer = setTimeout(() => {
-          if (hold.key !== 'ArrowRight') return;
-          const cur = getPlayer();
-          if (!cur) return;
-          if (!cur.paused() && !cur.ended()) startBoost(cur); // 播放中：按住 = 倍速
-          else startRepeatSeek(cur, cfg.seekStep);            // 暂停中：按住 = 连续快进
-        }, cfg.holdDelay);
+        beginHold('ArrowRight');
         return;
       }
       case 'ArrowLeft': {
         eat();
         if (repeat) return;
-        seekBy(p, -cfg.seekStep);
-        hold.key = 'ArrowLeft';
-        clearTimeout(hold.timer);
-        hold.timer = setTimeout(() => {
-          if (hold.key !== 'ArrowLeft') return;
-          const cur = getPlayer();
-          if (cur) startRepeatSeek(cur, -cfg.seekStep);
-        }, cfg.holdDelay);
+        beginHold('ArrowLeft');
         return;
       }
       case 'ArrowUp': {
@@ -1062,8 +1075,23 @@
   }
 
   function onKeyUp(e) {
-    delete pressedKeys[e.code];
-    if ((e.code === 'ArrowRight' || e.code === 'ArrowLeft') && hold.key === e.code) clearHold();
+    const code = e.code;
+    delete pressedKeys[code];
+    if (code !== 'ArrowRight' && code !== 'ArrowLeft') return;
+
+    // 这个键开启的倍速：哪怕 hold 状态被另一个键顶掉，也要在它松开时停掉
+    if (boost.active && boost.key === code) {
+      clearHold();
+      return;
+    }
+    if (hold.key !== code) return;
+
+    const wasTap = hold.mode === null; // 没进入长按 => 短按
+    const p = getPlayer();
+    clearHold();
+    if (!wasTap || !p) return;
+
+    seekBy(p, code === 'ArrowRight' ? cfg.seekStep : -cfg.seekStep); // 里面带提示浮层
   }
 
   // ==========================================================================
@@ -1109,8 +1137,8 @@
           <span class="mfc-x" title="关闭">✕</span></h4>
         <dl class="mfc-help-dl">
           <dt><kbd>空格</kbd><kbd>K</kbd></dt><dd>播放 / 暂停</dd>
-          <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>快退 / 快进 ${cfg.seekStep} 秒</dd>
-          <dt>按住 <kbd>→</kbd></dt><dd><b style="color:${ACCENT}">${cfg.boostRate}x</b> 倍速快放，松开即恢复</dd>
+          <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>轻按：快退 / 快进 ${cfg.seekStep} 秒</dd>
+          <dt>按住 <kbd>→</kbd></dt><dd><b style="color:${ACCENT}">${cfg.boostRate}x</b> 倍速快放（不跳转），松开即恢复</dd>
           <dt>按住 <kbd>←</kbd></dt><dd>连续快退</dd>
           <dt><kbd>↑</kbd><kbd>↓</kbd></dt><dd>音量加减（每次 ${Math.round(cfg.volumeStep * 100)}%）</dd>
           <dt><kbd>M</kbd></dt><dd>静音 / 取消静音</dd>
