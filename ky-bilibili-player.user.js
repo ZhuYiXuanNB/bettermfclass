@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         研优课(ky.mfedu.cn) B站式播放控制
 // @namespace    https://ky.mfedu.cn/
-// @version      1.0.0
+// @version      1.1.0
 // @description  给研优课的课程播放器加上 B 站风格的快捷键：← / → 快退快进、按住 → 倍速播放、↑ / ↓ 音量、空格播放暂停、F 全屏、W 网页全屏。已适配百家云(BPlayer/ffplayer 画布播放)与保利威。
 // @author       self
 // @match        https://ky.mfedu.cn/*
@@ -37,7 +37,7 @@
   if (window.__mfcPlayerHooked) return;
   window.__mfcPlayerHooked = true;
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const ACCENT = '#FB7299'; // B 站粉
 
   // ==========================================================================
@@ -842,6 +842,20 @@
   const RESTRICTED_KEYS = { ArrowLeft: 1, ArrowRight: 1, Comma: 1, Period: 1 };
   const restrictedNoticedFor = new WeakSet();
 
+  // 自己维护的“按键是否还按着”，不依赖 event.repeat
+  const pressedKeys = Object.create(null);
+  const REPEAT_TRACKED = { Space: 1, KeyK: 1, ArrowRight: 1, ArrowLeft: 1, KeyM: 1, KeyF: 1, KeyW: 1, KeyT: 1 };
+
+  function isRepeatPress(code) {
+    const wasDown = !!pressedKeys[code];
+    pressedKeys[code] = 1;
+    return wasDown;
+  }
+
+  function resetPressedKeys() {
+    for (const k in pressedKeys) delete pressedKeys[k];
+  }
+
   function noticeRestricted(p) {
     const inst = p && p.raw;
     if (inst && typeof inst === 'object') {
@@ -932,6 +946,10 @@
       e.stopPropagation();
     };
 
+    // 自己的连发判定：不信任 event.repeat —— 某些输入法/其他扩展吃掉 keyup 后，
+    // 浏览器会给下一次真实按下也打上 repeat 标记，那就会导致方向键“按了没反应”。
+    const repeat = REPEAT_TRACKED[code] ? isRepeatPress(code) : false;
+
     // 课程禁止快进 / 倍速时，尊重平台设置：这些键只提示、不执行
     if (RESTRICTED_KEYS[code] && typeof p.restricted === 'function' && p.restricted()) {
       eat();
@@ -943,13 +961,13 @@
       case 'Space':
       case 'KeyK': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         togglePlay(p);
         return;
       }
       case 'ArrowRight': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         // 单击 = 快进一小段
         seekBy(p, cfg.seekStep);
         hold.key = 'ArrowRight';
@@ -965,7 +983,7 @@
       }
       case 'ArrowLeft': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         seekBy(p, -cfg.seekStep);
         hold.key = 'ArrowLeft';
         clearTimeout(hold.timer);
@@ -990,20 +1008,20 @@
       }
       case 'KeyM': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         toggleMute(p);
         return;
       }
       case 'KeyF': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         toggleFullscreen(p);
         return;
       }
       case 'KeyW':
       case 'KeyT': {
         eat();
-        if (e.repeat) return;
+        if (repeat) return;
         toggleWebFullscreen(p);
         return;
       }
@@ -1039,6 +1057,7 @@
   }
 
   function onKeyUp(e) {
+    delete pressedKeys[e.code];
     if ((e.code === 'ArrowRight' || e.code === 'ArrowLeft') && hold.key === e.code) clearHold();
   }
 
@@ -1122,10 +1141,13 @@
         </div>
         <div class="mfc-hint">设置保存在本机浏览器里，改完立即生效，不影响课程本身。</div>`;
     }
-    // 面板也贴着播放器居中
+    // 面板贴着播放器居中，同时保证整块面板不会跑出屏幕
     const r = anchorRect();
-    el.style.left = Math.round(clamp(r.left + r.width / 2, 180, Math.max(180, window.innerWidth - 180))) + 'px';
-    el.style.top = Math.round(clamp(r.top + r.height / 2, 200, Math.max(200, window.innerHeight - 200))) + 'px';
+    const pw = el.offsetWidth || 360;
+    const ph = el.offsetHeight || 420;
+    const pad = 16;
+    el.style.left = Math.round(clamp(r.left + r.width / 2, pad + pw / 2, Math.max(pad + pw / 2, window.innerWidth - pad - pw / 2))) + 'px';
+    el.style.top = Math.round(clamp(r.top + r.height / 2, pad + ph / 2, Math.max(pad + ph / 2, window.innerHeight - pad - ph / 2))) + 'px';
     el.classList.add('mfc-show');
   }
 
@@ -1158,9 +1180,14 @@
   // ==========================================================================
   window.addEventListener('keydown', onKeyDown, true);
   window.addEventListener('keyup', onKeyUp, true);
-  window.addEventListener('blur', clearHold, true);
+  // 失焦 / 切走时把“按住”状态清干净，避免回来还停在倍速
+  const releaseAll = () => {
+    clearHold();
+    resetPressedKeys();
+  };
+  window.addEventListener('blur', releaseAll, true);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) clearHold();
+    if (document.hidden) releaseAll();
   });
 
   // 播放器被销毁 / 换集时收尾
