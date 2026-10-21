@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         研优课(ky.mfedu.cn) B站式播放控制
 // @namespace    https://github.com/ZhuYiXuanNB/bettermfclass
-// @version      1.1.2
+// @version      1.1.3
 // @description  给研优课的课程播放器加上 B 站风格的快捷键：← / → 快退快进、按住 → 倍速播放、↑ / ↓ 音量、空格播放暂停、F 全屏、W 网页全屏。已适配百家云(BPlayer/ffplayer 画布播放)与保利威。
 // @author       ZhuYiXuanNB
 // @match        https://ky.mfedu.cn/*
@@ -42,7 +42,14 @@
   if (window.__mfcPlayerHooked) return;
   window.__mfcPlayerHooked = true;
 
-  const VERSION = '1.1.2';
+  // 手机 / 平板这类纯触摸设备交给 ky-bilibili-mobile.user.js，本脚本不介入，
+  // 免得两边都弹提示。触摸本带键盘的设备（pointer: fine）仍然启用。
+  try {
+    const mq = window.matchMedia;
+    if (mq && mq('(pointer: coarse)').matches && !mq('(pointer: fine)').matches) return;
+  } catch (e) {}
+
+  const VERSION = '1.1.3';
   const ACCENT = '#FB7299'; // B 站粉
 
   // ==========================================================================
