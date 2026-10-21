@@ -39,9 +39,13 @@ BPlayer 的实例也只存在于 Vue 组件的闭包里，`window` 上取不到�
 ## 安装
 
 1. 浏览器装 [Tampermonkey](https://www.tampermonkey.net/)（油猴）扩展；
-2. 打开油猴面板 → 「添加新脚本」→ 全选删掉模板内容 → 把 `ky-bilibili-player.user.js` 的全部内容粘进去 → `Ctrl+S` 保存；
-3. 打开研优课任意视频页面，**刷新一次**（脚本要在播放器创建之前就位才能接管，装好之前已经打开着的页面需要刷新）；
+2. 装脚本，二选一：
+   - **一键装**：打开 [Releases](https://github.com/ZhuYiXuanNB/bettermfclass/releases/latest)，点 `ky-bilibili-player.user.js`，油猴会弹出安装；
+   - **手动装**：油猴面板 → 「添加新脚本」→ 全选删掉模板内容 → 把本仓库 `ky-bilibili-player.user.js` 全文粘进去 → `Ctrl+S` 保存；
+3. 打开研优课任意视频页面，**刷新一次**（脚本必须在播放器创建之前就位才能接管，安装前已经开着的页面要刷新）；
 4. 右下角会弹一条「已启用 B 站式快捷键」的提示，按 `Alt+H` 可随时查看快捷键表。
+
+脚本带了 `@updateURL` 指向本仓库 `main` 分支，以后仓库里升版本号，油猴会自动提示更新。
 
 临时试用（不想装扩展）：在视频页按 `F12` → Console → 粘贴脚本内容回车即可（仅当前页面有效，刷新失效）。
 
